@@ -2,24 +2,30 @@
 using SIPSorcery.Media;
 using SIPSorcery.Net;
 using SIPSorceryMedia.Windows;
+using SIPSorceryMedia.Abstractions;
 using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
-using SIPSorceryMedia.Windows;
-using SIPSorceryMedia.Abstractions;
+using System.Windows.Forms;
 
 namespace Chat_app_247.Services
 {
-    public class VoiceCallManager
+    public class VoiceCallManager : IDisposable
     {
         private RTCPeerConnection _pc;
-        private FirebaseDatabaseService _firebaseService;
+        private readonly FirebaseDatabaseService _firebaseService;
         private string _currentCallId;
         private string _currentUserToken;
         private CancellationTokenSource _listenCts;
         private WindowsAudioEndPoint _winAudio;
+
+        // Thêm lock để tránh race condition
+        private readonly object _lockObj = new object();
+        private bool _isDisposed = false;
+
+        // Buffer ICE candidates nếu chưa có remote description
+        private readonly List<RTCIceCandidateInit> _pendingCandidates = new List<RTCIceCandidateInit>();
 
         public event Action<string> OnCallStatusChanged;
 
@@ -30,48 +36,75 @@ namespace Chat_app_247.Services
 
         private void InitializePeerConnection()
         {
+            // GIỮ NGUYÊN CẤU HÌNH STUN CỦA BẠN
             var config = new RTCConfiguration
             {
                 iceServers = new List<RTCIceServer>
-        {
-          new RTCIceServer { urls = "stun:stun.l.google.com:19302" },
-          new RTCIceServer { urls = "stun:stun1.l.google.com:19302" }
-        }
+                {
+                    new RTCIceServer { urls = "stun:stun.l.google.com:19302" },
+                    new RTCIceServer { urls = "stun:stun1.l.google.com:19302" }
+                }
             };
 
             _pc = new RTCPeerConnection(config);
 
             _pc.onicecandidate += async (candidate) =>
             {
-                if (_pc.signalingState == RTCSignalingState.have_local_offer ||
-                  _pc.signalingState == RTCSignalingState.have_remote_offer)
+                try
                 {
-                    await _firebaseService.SendSignalAsync(_currentCallId, $"candidate_{Guid.NewGuid()}", new SignalingMessage
+                    // Chỉ gửi khi đã có local description
+                    if (_pc.localDescription != null &&
+                        !string.IsNullOrEmpty(candidate.candidate))
                     {
-                        Type = "candidate",
-                        Candidate = candidate.candidate,
-                        SdpMid = candidate.sdpMid,
-                        SdpMLineIndex = candidate.sdpMLineIndex
-                    }, _currentUserToken);
+                        await _firebaseService.SendSignalAsync(
+                            _currentCallId,
+                            $"candidate_{Guid.NewGuid()}",
+                            new SignalingMessage
+                            {
+                                Type = "candidate",
+                                Candidate = candidate.candidate,
+                                SdpMid = candidate.sdpMid,
+                                SdpMLineIndex = candidate.sdpMLineIndex
+                            },
+                            _currentUserToken);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    OnCallStatusChanged?.Invoke($"Lỗi gửi ICE candidate: {ex.Message}");
                 }
             };
 
             _pc.onconnectionstatechange += (state) =>
             {
-                OnCallStatusChanged?.Invoke($"Trạng thái: {state}");
+                try
+                {
+                    OnCallStatusChanged?.Invoke($"Trạng thái: {state}");
 
-                if (state == RTCPeerConnectionState.connected)
-                {
-                    _winAudio.Start();
+                    switch (state)
+                    {
+                        case RTCPeerConnectionState.connected:
+                            _winAudio?.Start();
+                            OnCallStatusChanged?.Invoke("Đã kết nối!");
+                            break;
+
+                        case RTCPeerConnectionState.failed:
+                            OnCallStatusChanged?.Invoke("Kết nối thất bại. Kiểm tra mạng.");
+                            EndCall();
+                            break;
+
+                        case RTCPeerConnectionState.disconnected:
+                            OnCallStatusChanged?.Invoke("Mất kết nối...");
+                            break;
+
+                        case RTCPeerConnectionState.closed:
+                            EndCall();
+                            break;
+                    }
                 }
-                else if (state == RTCPeerConnectionState.failed)
+                catch (Exception ex)
                 {
-                    OnCallStatusChanged?.Invoke("Kết nối thất bại. Kiểm tra mạng.");
-                    EndCall();
-                }
-                else if (state == RTCPeerConnectionState.closed)
-                {
-                    EndCall();
+                    OnCallStatusChanged?.Invoke($"Lỗi xử lý trạng thái: {ex.Message}");
                 }
             };
 
@@ -79,112 +112,329 @@ namespace Chat_app_247.Services
             {
                 _winAudio = new WindowsAudioEndPoint(new AudioEncoder());
 
-                var audioTrack = new MediaStreamTrack(_winAudio.GetAudioSourceFormats(), MediaStreamStatusEnum.SendRecv);
+                // Kiểm tra có audio source không
+                var formats = _winAudio.GetAudioSourceFormats();
+                if (formats == null || formats.Count == 0)
+                {
+                    throw new Exception("Không tìm thấy microphone hoặc loa");
+                }
+
+                var audioTrack = new MediaStreamTrack(
+                    _winAudio.GetAudioSourceFormats(),
+                    MediaStreamStatusEnum.SendRecv);
                 _pc.addTrack(audioTrack);
 
-                _pc.OnAudioFormatsNegotiated += (formats) => _winAudio.SetAudioSinkFormat(formats[0]);
+                _pc.OnAudioFormatsNegotiated += (formats) =>
+                {
+                    try
+                    {
+                        if (formats != null && formats.Count > 0)
+                        {
+                            _winAudio?.SetAudioSinkFormat(formats[0]);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        OnCallStatusChanged?.Invoke($"Lỗi cài đặt audio: {ex.Message}");
+                    }
+                };
             }
             catch (Exception ex)
             {
-                MessageBox.Show("Không tìm thấy Microphone: " + ex.Message);
+                OnCallStatusChanged?.Invoke($"Không thể khởi tạo audio: {ex.Message}");
+                throw; // Ném lỗi để caller biết và xử lý
             }
         }
 
         public async Task StartCallAsync(string callId, string token)
         {
-            _currentCallId = callId;
-            _currentUserToken = token;
-
-            InitializePeerConnection();
-
-            var offer = _pc.createOffer(null);
-            await _pc.setLocalDescription(offer);
-
-            await _firebaseService.SendSignalAsync(_currentCallId, "offer", new SignalingMessage
+            lock (_lockObj)
             {
-                Type = "offer",
-                Sdp = offer.sdp
-            }, _currentUserToken);
+                if (_isDisposed)
+                    throw new ObjectDisposedException(nameof(VoiceCallManager));
+            }
 
-            StartListeningSignaling();
-            OnCallStatusChanged?.Invoke("Đang gọi... (Chờ nghe máy)");
+            try
+            {
+                _currentCallId = callId;
+                _currentUserToken = token;
+
+                InitializePeerConnection();
+
+                RTCSessionDescriptionInit offer;
+                try
+                {
+                    offer = _pc.createOffer(null);
+                    await _pc.setLocalDescription(offer);
+                }
+                catch (Exception ex)
+                {
+                    OnCallStatusChanged?.Invoke($"Không thể tạo offer: {ex.Message}");
+                    EndCall();
+                    return;
+                }
+
+                // Gửi offer lên Firebase
+                await _firebaseService.SendSignalAsync(
+                    _currentCallId,
+                    "offer",
+                    new SignalingMessage
+                    {
+                        Type = "offer",
+                        Sdp = offer.sdp
+                    },
+                    _currentUserToken);
+
+                StartListeningSignaling();
+                OnCallStatusChanged?.Invoke("Đang gọi... (Chờ nghe máy)");
+            }
+            catch (Exception ex)
+            {
+                OnCallStatusChanged?.Invoke($"Lỗi bắt đầu cuộc gọi: {ex.Message}");
+                EndCall();
+                throw;
+            }
         }
 
         public async Task JoinCallAsync(string callId, string token)
         {
-            _currentCallId = callId;
-            _currentUserToken = token;
+            lock (_lockObj)
+            {
+                if (_isDisposed)
+                    throw new ObjectDisposedException(nameof(VoiceCallManager));
+            }
 
-            InitializePeerConnection();
-            StartListeningSignaling();
+            try
+            {
+                _currentCallId = callId;
+                _currentUserToken = token;
 
-            OnCallStatusChanged?.Invoke("Đang kết nối... (Tìm tín hiệu)");
+                InitializePeerConnection();
+                StartListeningSignaling();
+
+                OnCallStatusChanged?.Invoke("Đang kết nối... (Tìm tín hiệu)");
+            }
+            catch (Exception ex)
+            {
+                OnCallStatusChanged?.Invoke($"Lỗi tham gia cuộc gọi: {ex.Message}");
+                EndCall();
+                throw;
+            }
         }
 
         private void StartListeningSignaling()
         {
+            _listenCts?.Cancel();
+            _listenCts?.Dispose();
             _listenCts = new CancellationTokenSource();
-            Task.Run(() => _firebaseService.ListenToCallSignals(_currentCallId, _currentUserToken, HandleSignal, _listenCts.Token));
+
+            Task.Run(async () =>
+            {
+                try
+                {
+                    await _firebaseService.ListenToCallSignals(
+                        _currentCallId,
+                        _currentUserToken,
+                        HandleSignalAsync,
+                        _listenCts.Token);
+                }
+                catch (OperationCanceledException)
+                {
+                    // Bình thường khi cancel
+                }
+                catch (Exception ex)
+                {
+                    OnCallStatusChanged?.Invoke($"Lỗi lắng nghe tín hiệu: {ex.Message}");
+                }
+            }, _listenCts.Token);
         }
 
-        private async void HandleSignal(string key, SignalingMessage msg)
+        private async void HandleSignalAsync(string key, SignalingMessage msg)
         {
-            if (_pc == null) return;
-
-            if (msg.Type == "offer" && _pc.signalingState == RTCSignalingState.stable)
+            RTCPeerConnection pc;
+            lock (_lockObj)
             {
-                _pc.setRemoteDescription(new RTCSessionDescriptionInit { type = RTCSdpType.offer, sdp = msg.Sdp });
+                if (_isDisposed || _pc == null) return;
+                pc = _pc; // Local copy để tránh race condition
+            }
 
-                var answer = _pc.createAnswer(null);
-                await _pc.setLocalDescription(answer);
-
-                await _firebaseService.SendSignalAsync(_currentCallId, "answer", new SignalingMessage
+            try
+            {
+                switch (msg.Type)
                 {
-                    Type = "answer",
-                    Sdp = answer.sdp
-                }, _currentUserToken);
+                    case "offer":
+                        if (pc.signalingState == RTCSignalingState.stable)
+                        {
+                            // Set remote description
+                            pc.setRemoteDescription(new RTCSessionDescriptionInit
+                            {
+                                type = RTCSdpType.offer,
+                                sdp = msg.Sdp
+                            });
+
+                            // Tạo answer
+                            var answer = pc.createAnswer(null);
+                            await pc.setLocalDescription(answer);
+
+                            // Gửi answer
+                            await _firebaseService.SendSignalAsync(
+                                _currentCallId,
+                                "answer",
+                                new SignalingMessage
+                                {
+                                    Type = "answer",
+                                    Sdp = answer.sdp
+                                },
+                                _currentUserToken);
+
+                            lock (_pendingCandidates)
+                            {
+                                foreach (var candidate in _pendingCandidates)
+                                {
+                                    try
+                                    {
+                                        pc.addIceCandidate(candidate);
+                                    }
+                                    catch { }
+                                }
+                                _pendingCandidates.Clear();
+                            }
+                        }
+                        break;
+
+                    case "answer":
+                        if (pc.signalingState == RTCSignalingState.have_local_offer)
+                        {
+                            pc.setRemoteDescription(new RTCSessionDescriptionInit
+                            {
+                                type = RTCSdpType.answer,
+                                sdp = msg.Sdp
+                            });
+
+                            lock (_pendingCandidates)
+                            {
+                                foreach (var candidate in _pendingCandidates)
+                                {
+                                    try
+                                    {
+                                        pc.addIceCandidate(candidate);
+                                    }
+                                    catch { }
+                                }
+                                _pendingCandidates.Clear();
+                            }
+                        }
+                        break;
+
+                    case "candidate":
+                        var iceCandidate = new RTCIceCandidateInit
+                        {
+                            candidate = msg.Candidate,
+                            sdpMid = msg.SdpMid,
+                            sdpMLineIndex = (ushort)msg.SdpMLineIndex
+                        };
+
+                        if (pc.remoteDescription != null)
+                        {
+                            try
+                            {
+                                pc.addIceCandidate(iceCandidate);
+                            }
+                            catch (Exception ex)
+                            {
+                                OnCallStatusChanged?.Invoke($"Lỗi thêm ICE candidate: {ex.Message}");
+                            }
+                        }
+                        else
+                        {
+                            // Buffer candidate để add sau
+                            lock (_pendingCandidates)
+                            {
+                                _pendingCandidates.Add(iceCandidate);
+                            }
+                        }
+                        break;
+
+                    case "bye":
+                        OnCallStatusChanged?.Invoke("Người kia đã ngắt máy.");
+                        EndCall();
+                        break;
+
+                    case "declined":
+                        OnCallStatusChanged?.Invoke("Cuộc gọi bị từ chối.");
+                        EndCall();
+                        break;
+                }
             }
-            else if (msg.Type == "answer" && _pc.signalingState == RTCSignalingState.have_local_offer)
+            catch (Exception ex)
             {
-                _pc.setRemoteDescription(new RTCSessionDescriptionInit { type = RTCSdpType.answer, sdp = msg.Sdp });
-            }
-            else if (msg.Type == "candidate")
-            {
-                _pc.addIceCandidate(new RTCIceCandidateInit
-                {
-                    candidate = msg.Candidate,
-                    sdpMid = msg.SdpMid,
-                    sdpMLineIndex = (ushort)msg.SdpMLineIndex
-                });
-            }
-            else if (msg.Type == "bye")
-            {
-                EndCall();
+                OnCallStatusChanged?.Invoke($"Lỗi xử lý tín hiệu {msg.Type}: {ex.Message}");
             }
         }
 
         public async void EndCall()
         {
+            lock (_lockObj)
+            {
+                if (_isDisposed) return;
+                _isDisposed = true;
+            }
+
             try
             {
-                if (_pc != null)
+                // Gửi bye signal
+                if (!string.IsNullOrEmpty(_currentCallId))
                 {
-                    _pc.Close("User ended call");
-                    _pc = null;
+                    try
+                    {
+                        await _firebaseService.SendSignalAsync(
+                            _currentCallId,
+                            "bye",
+                            new SignalingMessage { Type = "bye" },
+                            _currentUserToken);
+                    }
+                    catch { }
                 }
-                if (_winAudio != null)
-                {
-                    await _winAudio.Close();
-                    _winAudio = null;
-                }
+
+                // Cancel listening
                 _listenCts?.Cancel();
 
-                await _firebaseService.SendSignalAsync(_currentCallId, "bye", new SignalingMessage { Type = "bye" }, _currentUserToken);
-            }
-            catch { }
+                // Cleanup audio
+                if (_winAudio != null)
+                {
+                    try
+                    {
+                        await _winAudio.CloseAudio();
+                    }
+                    catch { }
+                    _winAudio = null;
+                }
 
-            OnCallStatusChanged?.Invoke("Kết thúc.");
+                // Cleanup peer connection
+                if (_pc != null)
+                {
+                    try
+                    {
+                        _pc.Close("User ended call");
+                    }
+                    catch { }
+                    _pc = null;
+                }
+
+                OnCallStatusChanged?.Invoke("Kết thúc.");
+            }
+            catch (Exception ex)
+            {
+                OnCallStatusChanged?.Invoke($"Lỗi kết thúc cuộc gọi: {ex.Message}");
+            }
+        }
+
+        public void Dispose()
+        {
+            EndCall();
+            _listenCts?.Dispose();
+            _listenCts = null;
+            GC.SuppressFinalize(this);
         }
     }
-
 }

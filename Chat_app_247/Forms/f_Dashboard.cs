@@ -33,6 +33,7 @@ namespace Chat_app_247
         // LeftBorderBtn để tạo viền bên trái cho nút hiện tại
         private IconButton CurrentBtn;
         private Panel LeftBorderBtn;
+        private IDisposable _incomingCallSubscription;
 
         public f_Dashboard(Firebase.Auth.User user, string idToken, FirebaseAuthClient authProvider)
         {
@@ -135,11 +136,15 @@ namespace Chat_app_247
             // Nếu form đang ẩn (đang logout) thì không hiển thị confirm
             if (!this.Visible)
             {
+                // ✅ Cleanup subscription
                 return;
             }
 
-            if (MessageBox.Show("Bạn có chắc chắn muốn đóng ứng dụng không?", "Xác nhận", MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes)
+            if (MessageBox.Show("Bạn có chắc chắn muốn đóng ứng dụng không?",
+                "Xác nhận", MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes)
             {
+                // ✅ Cleanup subscription trước
+
                 await IsOffline();
                 Application.Exit();
             }
@@ -418,11 +423,6 @@ namespace Chat_app_247
         private void Bell_button_Click(object sender, EventArgs e)
         {
             List_Thong_Bao.Show(Bell_button, new Point(0, Bell_button.Height));
-        }
-
-        private void f_Dashboard_Load(object sender, EventArgs e)
-        {
-
         }
     }
 }

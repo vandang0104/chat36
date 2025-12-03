@@ -414,7 +414,6 @@
             Name = "f_Dashboard";
             Text = "f_Dashboard";
             FormClosing += f_Dashboard_FormClosing;
-            Load += f_Dashboard_Load;
             Panel_menu.ResumeLayout(false);
             sub_Setting_panel.ResumeLayout(false);
             panel_logo.ResumeLayout(false);

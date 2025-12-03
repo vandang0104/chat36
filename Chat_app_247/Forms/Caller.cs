@@ -1,13 +1,5 @@
 ﻿using Chat_app_247.Services;
-using Newtonsoft.Json.Linq;
 using System;
-using System.Collections.Generic;
-using System.ComponentModel;
-using System.Data;
-using System.Drawing;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using System.Windows.Forms;
 
 namespace Chat_app_247.Forms
@@ -17,9 +9,9 @@ namespace Chat_app_247.Forms
         private VoiceCallManager _callManager;
         private string _callId;
         private string _token;
-        private bool _isCaller; 
+        private bool _isCaller;
+        private bool _isClosing = false;
 
-        // Constructor nhận thêm tham số
         public Caller(string callId, string token, bool isCaller)
         {
             InitializeComponent();
@@ -27,27 +19,54 @@ namespace Chat_app_247.Forms
             _token = token;
             _isCaller = isCaller;
 
-            // Khởi tạo Service
-            var firebaseService = new FirebaseDatabaseService(); // Hoặc lấy từ Singleton nếu có
+            var firebaseService = new FirebaseDatabaseService();
             _callManager = new VoiceCallManager(firebaseService);
 
-            // Đăng ký sự kiện cập nhật giao diện
             _callManager.OnCallStatusChanged += UpdateStatus;
         }
 
         private void UpdateStatus(string status)
         {
+            if (this.IsDisposed || _isClosing) return;
+
             if (InvokeRequired)
             {
-                Invoke(new Action<string>(UpdateStatus), status);
+                try
+                {
+                    Invoke(new Action<string>(UpdateStatus), status);
+                }
+                catch (ObjectDisposedException)
+                {
+                    // Form đã dispose
+                    return;
+                }
+                catch (InvalidOperationException)
+                {
+                    return;
+                }
                 return;
             }
-            this.Text = status; 
 
-            if (status == "Kết thúc.")
+            try
             {
-                MessageBox.Show("Cuộc gọi đã kết thúc.");
-                this.Close();
+                this.Text = status;
+                lblStatus.Text = status;
+
+                if (status.Contains("Kết thúc") ||
+                    status.Contains("từ chối") ||
+                    status.Contains("thất bại"))
+                {
+                    if (!_isClosing)
+                    {
+                        _isClosing = true;
+                        MessageBox.Show(status, "Thông báo", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                        this.Close();
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Lỗi UpdateStatus: {ex.Message}");
             }
         }
 
@@ -55,33 +74,57 @@ namespace Chat_app_247.Forms
         {
             try
             {
+
                 if (_isCaller)
                 {
+                    lblStatus.Text = "Đang gọi...";
                     await _callManager.StartCallAsync(_callId, _token);
                 }
                 else
                 {
+                    lblStatus.Text = "Đang kết nối...";
                     await _callManager.JoinCallAsync(_callId, _token);
                 }
             }
             catch (Exception ex)
             {
-                MessageBox.Show("Lỗi cuộc gọi: " + ex.Message);
+                MessageBox.Show($"Lỗi cuộc gọi: {ex.Message}", "Lỗi", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 this.Close();
             }
         }
 
-        // Sự kiện nút tắt máy 
         private void guna2Button1_Click(object sender, EventArgs e)
         {
-            _callManager.EndCall();
+            if (_isClosing) return;
+            _isClosing = true;
+
+            try
+            {
+                _callManager?.EndCall();
+            }
+            catch { }
+
             this.Close();
         }
-
-        // Đảm bảo dọn dẹp khi đóng form
         private void Caller_FormClosing(object sender, FormClosingEventArgs e)
         {
-            _callManager.EndCall();
+            if (!_isClosing)
+            {
+                _isClosing = true;
+                try
+                {
+                    _callManager?.EndCall();
+                }
+                catch { }
+            }
+
+            // Hủy đăng ký event
+            if (_callManager != null)
+            {
+                _callManager.OnCallStatusChanged -= UpdateStatus;
+                _callManager.Dispose();
+                _callManager = null;
+            }
         }
     }
 }

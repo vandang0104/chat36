@@ -5,21 +5,21 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using System.Text.Json;
-using Chat_app_247.Models;   // nơi có class Conversation
-
+using Chat_app_247.Models;
+using System.Net.Http;
+using System.IO;
+using System.Threading;
 
 namespace Chat_app_247.Services
 {
     public class FirebaseDatabaseService
     {
-        // khởi tạo Httpclient để gửi các yêu cầu  HTTP đến firebase 
         private readonly HttpClient _http = new();
 
         public async Task PutAsync<T>(string path, T data, string idToken)
-        { // base url không có auth
+        {
             var baseUrl = $"{FirebaseConfigFile.DatabaseURL.TrimEnd('/')}/{path}.json";
 
-            // Nếu idToken rỗng thì không gắn ?auth=
             var url = string.IsNullOrEmpty(idToken)
                 ? baseUrl
                 : $"{baseUrl}?auth={idToken}";
@@ -29,12 +29,30 @@ namespace Chat_app_247.Services
             var res = await _http.PutAsync(url, new StringContent(json, Encoding.UTF8, "application/json"));
 
             if (!res.IsSuccessStatusCode)
-                throw new Exception("Không thể ghi dữ liệu.");
+            {
+                var error = await res.Content.ReadAsStringAsync();
+                throw new Exception($"Không thể ghi dữ liệu: {error}");
+            }
         }
-        /// <summary>
-        /// Tạo 1 cuộc trò chuyện nhóm mới trên Firebase.
-        /// Ghi vào node: Conversations/{conversationId}
-        /// </summary>
+
+        // ✅ FIX: Thêm method DELETE
+        public async Task DeleteAsync(string path, string idToken)
+        {
+            var baseUrl = $"{FirebaseConfigFile.DatabaseURL.TrimEnd('/')}/{path}.json";
+
+            var url = string.IsNullOrEmpty(idToken)
+                ? baseUrl
+                : $"{baseUrl}?auth={idToken}";
+
+            var res = await _http.DeleteAsync(url);
+
+            if (!res.IsSuccessStatusCode)
+            {
+                var error = await res.Content.ReadAsStringAsync();
+                throw new Exception($"Không thể xóa dữ liệu: {error}");
+            }
+        }
+
         public async Task<string> CreateGroupConversationAsync(
             string groupName,
             List<string> participantIds,
@@ -48,11 +66,9 @@ namespace Chat_app_247.Services
             if (participantIds == null)
                 participantIds = new List<string>();
 
-            // đảm bảo người tạo cũng là thành viên
             if (!participantIds.Contains(currentUserId))
                 participantIds.Add(currentUserId);
 
-            // tự sinh ConversationId
             string conversationId = Guid.NewGuid().ToString("N");
 
             var conversation = new Conversation
@@ -67,62 +83,133 @@ namespace Chat_app_247.Services
                 TypingIndicator = new Dictionary<string, bool>()
             };
 
-            // dùng lại PutAsync để ghi vào: Conversations/{conversationId}
             string path = $"Conversations/{conversationId}";
             await PutAsync(path, conversation, idToken);
 
             return conversationId;
         }
+
         public async Task SendSignalAsync(string callId, string key, SignalingMessage data, string idToken)
         {
             string path = $"calls/{callId}/{key}";
             await PutAsync(path, data, idToken);
         }
 
-        public async Task ListenToCallSignals(string callId, string idToken, Action<string, SignalingMessage> onSignalReceived, CancellationToken token)
+        public async Task ListenToCallSignals(
+            string callId,
+            string idToken,
+            Action<string, SignalingMessage> onSignalReceived,
+            CancellationToken token)
         {
             var baseUrl = $"{FirebaseConfigFile.DatabaseURL.TrimEnd('/')}/calls/{callId}.json";
             var url = string.IsNullOrEmpty(idToken) ? baseUrl : $"{baseUrl}?auth={idToken}";
 
-            // Dùng header này để stream dữ liệu từ Firebase
             var request = new HttpRequestMessage(HttpMethod.Get, url);
-            request.Headers.Accept.Add(new System.Net.Http.Headers.MediaTypeWithQualityHeaderValue("text/event-stream"));
+            request.Headers.Accept.Add(
+                new System.Net.Http.Headers.MediaTypeWithQualityHeaderValue("text/event-stream"));
 
-            using (var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token))
-            using (var stream = await response.Content.ReadAsStreamAsync(token))
-            using (var reader = new StreamReader(stream))
+            HttpResponseMessage response = null;
+            Stream stream = null;
+            StreamReader reader = null;
+
+            try
             {
+                response = await _http.SendAsync(
+                    request,
+                    HttpCompletionOption.ResponseHeadersRead,
+                    token);
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    throw new Exception($"Lỗi kết nối Firebase: {response.StatusCode}");
+                }
+
+                stream = await response.Content.ReadAsStreamAsync(token);
+                reader = new StreamReader(stream);
+
                 while (!token.IsCancellationRequested)
                 {
-                    var line = await reader.ReadLineAsync();
+                    string line = null;
+
+                    try
+                    {
+                        line = await reader.ReadLineAsync();
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        break;
+                    }
+                    catch (Exception ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"Lỗi đọc stream: {ex.Message}");
+                        break;
+                    }
+
+                    if (line == null)
+                    {
+                        System.Diagnostics.Debug.WriteLine("Stream đã đóng");
+                        break;
+                    }
+
                     if (string.IsNullOrWhiteSpace(line)) continue;
 
                     if (line.StartsWith("data: "))
                     {
                         var json = line.Substring(6).Trim();
-                        if (json == "null") continue;
+                        if (json == "null" || json == "keep-alive") continue;
 
                         try
                         {
-                            // Firebase trả về dạng: {"path":"/key", "data":{...}}
+                            // Firebase format: {"path":"/key", "data":{...}}
                             using (JsonDocument doc = JsonDocument.Parse(json))
                             {
                                 var root = doc.RootElement;
+
                                 if (root.TryGetProperty("path", out var pathElement) &&
                                     root.TryGetProperty("data", out var dataElement))
                                 {
                                     string key = pathElement.GetString()?.Trim('/');
-                                    var signal = JsonSerializer.Deserialize<SignalingMessage>(dataElement.GetRawText());
-                                    if (signal != null)
+
+                                    if (string.IsNullOrEmpty(key)) continue;
+
+                                    if (dataElement.ValueKind == JsonValueKind.Null)
+                                        continue;
+
+                                    var signal = JsonSerializer.Deserialize<SignalingMessage>(
+                                        dataElement.GetRawText());
+
+                                    if (signal != null && !string.IsNullOrEmpty(signal.Type))
                                     {
                                         onSignalReceived?.Invoke(key, signal);
                                     }
                                 }
                             }
                         }
-                        catch { /* Bỏ qua lỗi parse JSON rác */ }
+                        catch (JsonException ex)
+                        {
+                            System.Diagnostics.Debug.WriteLine($"Lỗi parse JSON: {ex.Message}");
+                        }
+                        catch (Exception ex)
+                        {
+                            System.Diagnostics.Debug.WriteLine($"Lỗi xử lý signal: {ex.Message}");
+                        }
                     }
                 }
+            }
+            catch (OperationCanceledException)
+            {
+                // Bình thường khi cancel
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Lỗi ListenToCallSignals: {ex.Message}");
+                throw;
+            }
+            finally
+            {
+                reader?.Dispose();
+                stream?.Dispose();
+                response?.Dispose();
             }
         }
     }

@@ -927,38 +927,76 @@ namespace Chat_app_247
         {
             if (_isCurrentGroupChat)
             {
-                MessageBox.Show("Chức năng gọi nhóm đang được phát triển!", "Thông báo");
+                MessageBox.Show("Chức năng gọi nhóm đang được phát triển!",
+                    "Thông báo", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
 
             if (_currentFriendUser == null)
             {
-                MessageBox.Show("Vui lòng chọn một người bạn để gọi.", "Thông báo");
+                MessageBox.Show("Vui lòng chọn một người bạn để gọi.",
+                    "Thông báo", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
 
+            string callId = null;
+            string receiverId = _currentFriendUser.UserId;
+
             try
             {
-                string callId = Guid.NewGuid().ToString();
-                string receiverId = _currentFriendUser.UserId; // Lấy ID người nhận từ biến _currentFriendUser
-                string myName = _currentUserName; // Lấy tên mình
+                btn_call.Enabled = false;
+                btn_call.Text = "Đang gọi...";
+
+                callId = Guid.NewGuid().ToString();
+                string myName = _currentUserName;
 
                 var callRequest = new Dictionary<string, string>
-                {
-                    { "callId", callId },
-                    { "callerName", myName },
-                    { "status", "ringing" },
-                    { "timestamp", DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString() }
-                };
+        {
+            { "callId", callId },
+            { "callerName", myName },
+            { "status", "ringing" },
+            { "timestamp", DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString() }
+        };
 
                 await _client.SetAsync($"Users/{receiverId}/incoming_call", callRequest);
 
                 Caller callerForm = new Caller(callId, _idToken, true);
+
+                callerForm.FormClosed += async (s, args) =>
+                {
+                    try
+                    {
+                        await _client.DeleteAsync($"Users/{receiverId}/incoming_call");
+                    }
+                    catch { }
+                    if (!this.IsDisposed)
+                    {
+                        this.Invoke((MethodInvoker)delegate
+                        {
+                            btn_call.Enabled = true;
+                            btn_call.Text = "📞";
+                        });
+                    }
+                };
+
                 callerForm.Show();
             }
             catch (Exception ex)
             {
-                MessageBox.Show("Không thể thực hiện cuộc gọi: " + ex.Message);
+                MessageBox.Show($"Không thể thực hiện cuộc gọi: {ex.Message}",
+                    "Lỗi", MessageBoxButtons.OK, MessageBoxIcon.Error);
+
+                if (!string.IsNullOrEmpty(callId))
+                {
+                    try
+                    {
+                        await _client.DeleteAsync($"Users/{receiverId}/incoming_call");
+                    }
+                    catch { }
+                }
+
+                btn_call.Enabled = true;
+                btn_call.Text = "📞";
             }
         }
     }
