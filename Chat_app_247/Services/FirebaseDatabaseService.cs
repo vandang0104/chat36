@@ -35,7 +35,6 @@ namespace Chat_app_247.Services
             }
         }
 
-        // ✅ FIX: Thêm method DELETE
         public async Task DeleteAsync(string path, string idToken)
         {
             var baseUrl = $"{FirebaseConfigFile.DatabaseURL.TrimEnd('/')}/{path}.json";
@@ -170,17 +169,37 @@ namespace Chat_app_247.Services
                                 {
                                     string key = pathElement.GetString()?.Trim('/');
 
-                                    if (string.IsNullOrEmpty(key)) continue;
-
-                                    if (dataElement.ValueKind == JsonValueKind.Null)
-                                        continue;
-
-                                    var signal = JsonSerializer.Deserialize<SignalingMessage>(
-                                        dataElement.GetRawText());
-
-                                    if (signal != null && !string.IsNullOrEmpty(signal.Type))
+                                    if (string.IsNullOrEmpty(key))
                                     {
-                                        onSignalReceived?.Invoke(key, signal);
+                                        try
+                                        {
+                                            var allSignals = JsonSerializer.Deserialize<Dictionary<string, SignalingMessage>>(dataElement.GetRawText());
+                                            if (allSignals != null)
+                                            {
+                                                foreach (var kvp in allSignals)
+                                                {
+                                                    if (kvp.Value != null && !string.IsNullOrEmpty(kvp.Value.Type))
+                                                    {
+                                                        onSignalReceived?.Invoke(kvp.Key, kvp.Value);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        catch
+                                        {
+                                        }
+                                    }
+                                    else
+                                    {
+                                        if (dataElement.ValueKind == JsonValueKind.Null)
+                                            continue;
+
+                                        var signal = JsonSerializer.Deserialize<SignalingMessage>(dataElement.GetRawText());
+
+                                        if (signal != null && !string.IsNullOrEmpty(signal.Type))
+                                        {
+                                            onSignalReceived?.Invoke(key, signal);
+                                        }
                                     }
                                 }
                             }

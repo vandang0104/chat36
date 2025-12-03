@@ -80,9 +80,6 @@ namespace Chat_app_247.Forms
                 btnAccept.Enabled = false;
                 btnDecline.Enabled = false;
 
-                lblStatus.Text = "Đang kết nối...";
-
-                await _callManager.JoinCallAsync(_callId, _token);
 
                 if (_firebaseClient != null && !string.IsNullOrEmpty(_myUserId))
                 {
@@ -98,6 +95,13 @@ namespace Chat_app_247.Forms
                 Caller callerForm = new Caller(_callId, _token, false);
                 callerForm.FormClosed += (s, args) => this.Close();
                 callerForm.Show();
+
+                if (_callManager != null)
+                {
+                    _callManager.OnCallStatusChanged -= UpdateStatus;
+                    _callManager.Dispose();
+                    _callManager = null;
+                }
             }
             catch (Exception ex)
             {
