@@ -28,12 +28,12 @@
         /// </summary>
         private void InitializeComponent()
         {
-            Guna.UI2.WinForms.Suite.CustomizableEdges customizableEdges1 = new Guna.UI2.WinForms.Suite.CustomizableEdges();
-            Guna.UI2.WinForms.Suite.CustomizableEdges customizableEdges2 = new Guna.UI2.WinForms.Suite.CustomizableEdges();
-            Guna.UI2.WinForms.Suite.CustomizableEdges customizableEdges3 = new Guna.UI2.WinForms.Suite.CustomizableEdges();
-            Guna.UI2.WinForms.Suite.CustomizableEdges customizableEdges4 = new Guna.UI2.WinForms.Suite.CustomizableEdges();
-            Guna.UI2.WinForms.Suite.CustomizableEdges customizableEdges5 = new Guna.UI2.WinForms.Suite.CustomizableEdges();
-            guna2Button1 = new Guna.UI2.WinForms.Guna2Button();
+            Guna.UI2.WinForms.Suite.CustomizableEdges customizableEdges6 = new Guna.UI2.WinForms.Suite.CustomizableEdges();
+            Guna.UI2.WinForms.Suite.CustomizableEdges customizableEdges7 = new Guna.UI2.WinForms.Suite.CustomizableEdges();
+            Guna.UI2.WinForms.Suite.CustomizableEdges customizableEdges8 = new Guna.UI2.WinForms.Suite.CustomizableEdges();
+            Guna.UI2.WinForms.Suite.CustomizableEdges customizableEdges9 = new Guna.UI2.WinForms.Suite.CustomizableEdges();
+            Guna.UI2.WinForms.Suite.CustomizableEdges customizableEdges10 = new Guna.UI2.WinForms.Suite.CustomizableEdges();
+            btnDecline = new Guna.UI2.WinForms.Guna2Button();
             btnAccept = new Guna.UI2.WinForms.Guna2Button();
             lblStatus = new Guna.UI2.WinForms.Guna2HtmlLabel();
             lblCallerName = new Guna.UI2.WinForms.Guna2HtmlLabel();
@@ -41,31 +41,32 @@
             ((System.ComponentModel.ISupportInitialize)picAvatar).BeginInit();
             SuspendLayout();
             // 
-            // guna2Button1
+            // btnDecline
             // 
-            guna2Button1.BorderRadius = 15;
-            guna2Button1.Cursor = Cursors.Hand;
-            guna2Button1.CustomizableEdges = customizableEdges1;
-            guna2Button1.DisabledState.BorderColor = Color.DarkGray;
-            guna2Button1.DisabledState.CustomBorderColor = Color.DarkGray;
-            guna2Button1.DisabledState.FillColor = Color.FromArgb(169, 169, 169);
-            guna2Button1.DisabledState.ForeColor = Color.FromArgb(141, 141, 141);
-            guna2Button1.FillColor = Color.Red;
-            guna2Button1.Font = new Font("Segoe UI", 21.8571434F, FontStyle.Bold, GraphicsUnit.Point, 0);
-            guna2Button1.ForeColor = Color.White;
-            guna2Button1.Location = new Point(233, 353);
-            guna2Button1.Margin = new Padding(2);
-            guna2Button1.Name = "guna2Button1";
-            guna2Button1.ShadowDecoration.CustomizableEdges = customizableEdges2;
-            guna2Button1.Size = new Size(113, 58);
-            guna2Button1.TabIndex = 25;
-            guna2Button1.Text = "✆";
+            btnDecline.BorderRadius = 15;
+            btnDecline.Cursor = Cursors.Hand;
+            btnDecline.CustomizableEdges = customizableEdges6;
+            btnDecline.DisabledState.BorderColor = Color.DarkGray;
+            btnDecline.DisabledState.CustomBorderColor = Color.DarkGray;
+            btnDecline.DisabledState.FillColor = Color.FromArgb(169, 169, 169);
+            btnDecline.DisabledState.ForeColor = Color.FromArgb(141, 141, 141);
+            btnDecline.FillColor = Color.Red;
+            btnDecline.Font = new Font("Segoe UI", 21.8571434F, FontStyle.Bold, GraphicsUnit.Point, 0);
+            btnDecline.ForeColor = Color.White;
+            btnDecline.Location = new Point(233, 353);
+            btnDecline.Margin = new Padding(2);
+            btnDecline.Name = "btnDecline";
+            btnDecline.ShadowDecoration.CustomizableEdges = customizableEdges7;
+            btnDecline.Size = new Size(113, 58);
+            btnDecline.TabIndex = 25;
+            btnDecline.Text = "✆";
+            btnDecline.Click += btnDecline_Click;
             // 
             // btnAccept
             // 
             btnAccept.BorderRadius = 15;
             btnAccept.Cursor = Cursors.Hand;
-            btnAccept.CustomizableEdges = customizableEdges3;
+            btnAccept.CustomizableEdges = customizableEdges8;
             btnAccept.DisabledState.BorderColor = Color.DarkGray;
             btnAccept.DisabledState.CustomBorderColor = Color.DarkGray;
             btnAccept.DisabledState.FillColor = Color.FromArgb(169, 169, 169);
@@ -76,10 +77,11 @@
             btnAccept.Location = new Point(40, 353);
             btnAccept.Margin = new Padding(2);
             btnAccept.Name = "btnAccept";
-            btnAccept.ShadowDecoration.CustomizableEdges = customizableEdges4;
+            btnAccept.ShadowDecoration.CustomizableEdges = customizableEdges9;
             btnAccept.Size = new Size(113, 58);
             btnAccept.TabIndex = 24;
             btnAccept.Text = "📞";
+            btnAccept.Click += btnAccept_Click;
             // 
             // lblStatus
             // 
@@ -110,7 +112,7 @@
             picAvatar.Location = new Point(115, 49);
             picAvatar.Margin = new Padding(2);
             picAvatar.Name = "picAvatar";
-            picAvatar.ShadowDecoration.CustomizableEdges = customizableEdges5;
+            picAvatar.ShadowDecoration.CustomizableEdges = customizableEdges10;
             picAvatar.ShadowDecoration.Mode = Guna.UI2.WinForms.Enums.ShadowMode.Circle;
             picAvatar.Size = new Size(145, 145);
             picAvatar.SizeMode = PictureBoxSizeMode.Zoom;
@@ -122,13 +124,14 @@
             AutoScaleDimensions = new SizeF(8F, 20F);
             AutoScaleMode = AutoScaleMode.Font;
             ClientSize = new Size(384, 450);
-            Controls.Add(guna2Button1);
+            Controls.Add(btnDecline);
             Controls.Add(btnAccept);
             Controls.Add(lblStatus);
             Controls.Add(lblCallerName);
             Controls.Add(picAvatar);
             Name = "InComingCall";
             Text = "InComingCall";
+            FormClosing += InComingCall_FormClosing;
             ((System.ComponentModel.ISupportInitialize)picAvatar).EndInit();
             ResumeLayout(false);
             PerformLayout();
@@ -136,7 +139,7 @@
 
         #endregion
 
-        private Guna.UI2.WinForms.Guna2Button guna2Button1;
+        private Guna.UI2.WinForms.Guna2Button btnDecline;
         private Guna.UI2.WinForms.Guna2Button btnAccept;
         private Guna.UI2.WinForms.Guna2HtmlLabel lblStatus;
         private Guna.UI2.WinForms.Guna2HtmlLabel lblCallerName;

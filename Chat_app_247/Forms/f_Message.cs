@@ -5,6 +5,7 @@ using Chat_app_247.Models;
 using Chat_app_247.Services;
 using Firebase.Database;
 using Firebase.Database.Query;
+using FireSharp;
 using FireSharp.Interfaces;
 using FireSharp.Response;
 using Newtonsoft.Json;
@@ -28,9 +29,11 @@ namespace Chat_app_247
         private string _userId;
         private string _currentConversationId;
         private List<User> _friends = new List<User>();
+        private string _idToken; 
+        private string _currentUserName = "Bạn";
 
-        // Client mới cho Observable (FirebaseDatabase.net)
-        private FirebaseClient _realtimeClient;
+        // SỬA: Thêm "Firebase.Database." vào trước
+        private Firebase.Database.FirebaseClient _realtimeClient;
 
         // Biến này để hủy listener
         private IDisposable _messageSubscription;
@@ -59,16 +62,18 @@ namespace Chat_app_247
         //Bộ nhớ đệm thông tin user, tránh tải lại nhiều lần
         private Dictionary<string, User> _userCache = new Dictionary<string, User>();
         // Constructor
-        public f_Message(IFirebaseClient client, string userId)
+        public f_Message(IFirebaseClient client, string userId, string idToken, string userName)
         {
             InitializeComponent();
 
             // Gán vào field (KHÔNG tạo biến local mới)
             _client = client;
             _userId = userId;
+            _idToken = idToken;       // Lưu Token
+            _currentUserName = userName; // Lưu tên mình
 
             // Client FirebaseDatabase.net
-            _realtimeClient = new FirebaseClient(FirebaseConfigFile.DatabaseURL);
+            _realtimeClient = new Firebase.Database.FirebaseClient(FirebaseConfigFile.DatabaseURL);
 
             // Cài đặt UI
             pnl_information.Visible = false;
@@ -918,6 +923,44 @@ namespace Chat_app_247
             pnlRecorderContainer.Height = 0;
         }
 
+        private async void btn_call_Click(object sender, EventArgs e)
+        {
+            if (_isCurrentGroupChat)
+            {
+                MessageBox.Show("Chức năng gọi nhóm đang được phát triển!", "Thông báo");
+                return;
+            }
+
+            if (_currentFriendUser == null)
+            {
+                MessageBox.Show("Vui lòng chọn một người bạn để gọi.", "Thông báo");
+                return;
+            }
+
+            try
+            {
+                string callId = Guid.NewGuid().ToString();
+                string receiverId = _currentFriendUser.UserId; // Lấy ID người nhận từ biến _currentFriendUser
+                string myName = _currentUserName; // Lấy tên mình
+
+                var callRequest = new Dictionary<string, string>
+                {
+                    { "callId", callId },
+                    { "callerName", myName },
+                    { "status", "ringing" },
+                    { "timestamp", DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString() }
+                };
+
+                await _client.SetAsync($"Users/{receiverId}/incoming_call", callRequest);
+
+                Caller callerForm = new Caller(callId, _idToken, true);
+                callerForm.Show();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Không thể thực hiện cuộc gọi: " + ex.Message);
+            }
+        }
     }
 }
 

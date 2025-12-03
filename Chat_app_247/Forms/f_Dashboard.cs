@@ -50,6 +50,62 @@ namespace Chat_app_247
             InitializeFirebase();
             // Tạo đối tượng User từ thông tin Firebase Auth
             LoadUserDataFromDatabase(user);
+            ListenForIncomingCalls();
+        }
+
+        private async void ListenForIncomingCalls()
+        {
+            // Lắng nghe tại node: Users/{CurrentUserId}/incoming_call
+            // Khi ai đó gọi, họ sẽ ghi data vào đây.
+
+            if (firebaseClient == null) return;
+
+            // Sử dụng OnAsync để lắng nghe thay đổi thời gian thực
+            await firebaseClient.OnAsync($"Users/{userId}/incoming_call", async (sender, args, context) =>
+            {
+                if (args.Data == "null" || string.IsNullOrEmpty(args.Data)) return;
+
+                try
+                {
+                    var response = await firebaseClient.GetAsync($"Users/{userId}/incoming_call");
+                    var callInfo = response.ResultAs<Dictionary<string, string>>();
+
+                    if (callInfo != null && callInfo.ContainsKey("callId"))
+                    {
+                        string callId = callInfo["callId"];
+                        string callerName = callInfo.ContainsKey("callerName") ? callInfo["callerName"] : "Ai đó";
+                        string status = callInfo.ContainsKey("status") ? callInfo["status"] : "ringing";
+
+                        // Chỉ hiện form nếu trạng thái là "ringing"
+                        if (status == "ringing")
+                        {
+                            this.Invoke((MethodInvoker)delegate
+                            {
+                                // Kiểm tra xem đã có form cuộc gọi nào đang mở chưa
+                                bool isAlreadyCalling = false;
+                                foreach (Form f in Application.OpenForms)
+                                {
+                                    if (f is InComingCall || f is Caller)
+                                    {
+                                        isAlreadyCalling = true;
+                                        break;
+                                    }
+                                }
+
+                                if (!isAlreadyCalling)
+                                {
+                                    InComingCall incomingForm = new InComingCall(callId, callerName, auth_Pro.User.Credential.IdToken);
+                                    incomingForm.Show(); // Show form popup
+                                }
+                            });
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("Lỗi nhận cuộc gọi: " + ex.Message);
+                }
+            });
         }
         // Đảm bảo đưa Trạng thái của user về offline
         private async Task IsOffline()
@@ -261,7 +317,7 @@ namespace Chat_app_247
         private void Message_button_Click(object sender, EventArgs e)
         {
             ActivateButton(sender, RGBColors.color3);
-            f_Message f_message = new f_Message(firebaseClient, userId);
+            f_Message f_message = new f_Message(firebaseClient, userId, auth_Pro.User.Credential.IdToken, currentUser.DisplayName);
             f_message.Text = "Tin Nhắn";
             OpenSmallForm(f_message);
         }

@@ -10,7 +10,7 @@ using Chat_app_247.Models;   // nơi có class Conversation
 
 namespace Chat_app_247.Services
 {
-    internal class FirebaseDatabaseService
+    public class FirebaseDatabaseService
     {
         // khởi tạo Httpclient để gửi các yêu cầu  HTTP đến firebase 
         private readonly HttpClient _http = new();
@@ -72,6 +72,58 @@ namespace Chat_app_247.Services
             await PutAsync(path, conversation, idToken);
 
             return conversationId;
+        }
+        public async Task SendSignalAsync(string callId, string key, SignalingMessage data, string idToken)
+        {
+            string path = $"calls/{callId}/{key}";
+            await PutAsync(path, data, idToken);
+        }
+
+        public async Task ListenToCallSignals(string callId, string idToken, Action<string, SignalingMessage> onSignalReceived, CancellationToken token)
+        {
+            var baseUrl = $"{FirebaseConfigFile.DatabaseURL.TrimEnd('/')}/calls/{callId}.json";
+            var url = string.IsNullOrEmpty(idToken) ? baseUrl : $"{baseUrl}?auth={idToken}";
+
+            // Dùng header này để stream dữ liệu từ Firebase
+            var request = new HttpRequestMessage(HttpMethod.Get, url);
+            request.Headers.Accept.Add(new System.Net.Http.Headers.MediaTypeWithQualityHeaderValue("text/event-stream"));
+
+            using (var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token))
+            using (var stream = await response.Content.ReadAsStreamAsync(token))
+            using (var reader = new StreamReader(stream))
+            {
+                while (!token.IsCancellationRequested)
+                {
+                    var line = await reader.ReadLineAsync();
+                    if (string.IsNullOrWhiteSpace(line)) continue;
+
+                    if (line.StartsWith("data: "))
+                    {
+                        var json = line.Substring(6).Trim();
+                        if (json == "null") continue;
+
+                        try
+                        {
+                            // Firebase trả về dạng: {"path":"/key", "data":{...}}
+                            using (JsonDocument doc = JsonDocument.Parse(json))
+                            {
+                                var root = doc.RootElement;
+                                if (root.TryGetProperty("path", out var pathElement) &&
+                                    root.TryGetProperty("data", out var dataElement))
+                                {
+                                    string key = pathElement.GetString()?.Trim('/');
+                                    var signal = JsonSerializer.Deserialize<SignalingMessage>(dataElement.GetRawText());
+                                    if (signal != null)
+                                    {
+                                        onSignalReceived?.Invoke(key, signal);
+                                    }
+                                }
+                            }
+                        }
+                        catch { /* Bỏ qua lỗi parse JSON rác */ }
+                    }
+                }
+            }
         }
     }
 }

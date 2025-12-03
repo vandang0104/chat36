@@ -28,9 +28,9 @@
         /// </summary>
         private void InitializeComponent()
         {
-            Guna.UI2.WinForms.Suite.CustomizableEdges customizableEdges4 = new Guna.UI2.WinForms.Suite.CustomizableEdges();
-            Guna.UI2.WinForms.Suite.CustomizableEdges customizableEdges5 = new Guna.UI2.WinForms.Suite.CustomizableEdges();
-            Guna.UI2.WinForms.Suite.CustomizableEdges customizableEdges6 = new Guna.UI2.WinForms.Suite.CustomizableEdges();
+            Guna.UI2.WinForms.Suite.CustomizableEdges customizableEdges1 = new Guna.UI2.WinForms.Suite.CustomizableEdges();
+            Guna.UI2.WinForms.Suite.CustomizableEdges customizableEdges2 = new Guna.UI2.WinForms.Suite.CustomizableEdges();
+            Guna.UI2.WinForms.Suite.CustomizableEdges customizableEdges3 = new Guna.UI2.WinForms.Suite.CustomizableEdges();
             guna2Button1 = new Guna.UI2.WinForms.Guna2Button();
             lblStatus = new Guna.UI2.WinForms.Guna2HtmlLabel();
             lblCallerName = new Guna.UI2.WinForms.Guna2HtmlLabel();
@@ -44,7 +44,7 @@
             // 
             guna2Button1.BorderRadius = 15;
             guna2Button1.Cursor = Cursors.Hand;
-            guna2Button1.CustomizableEdges = customizableEdges4;
+            guna2Button1.CustomizableEdges = customizableEdges1;
             guna2Button1.DisabledState.BorderColor = Color.DarkGray;
             guna2Button1.DisabledState.CustomBorderColor = Color.DarkGray;
             guna2Button1.DisabledState.FillColor = Color.FromArgb(169, 169, 169);
@@ -55,10 +55,11 @@
             guna2Button1.Location = new Point(76, 349);
             guna2Button1.Margin = new Padding(2);
             guna2Button1.Name = "guna2Button1";
-            guna2Button1.ShadowDecoration.CustomizableEdges = customizableEdges5;
+            guna2Button1.ShadowDecoration.CustomizableEdges = customizableEdges2;
             guna2Button1.Size = new Size(113, 58);
             guna2Button1.TabIndex = 25;
             guna2Button1.Text = "✆";
+            guna2Button1.Click += guna2Button1_Click;
             // 
             // lblStatus
             // 
@@ -90,7 +91,7 @@
             picAvatar.Location = new Point(65, 25);
             picAvatar.Margin = new Padding(2);
             picAvatar.Name = "picAvatar";
-            picAvatar.ShadowDecoration.CustomizableEdges = customizableEdges6;
+            picAvatar.ShadowDecoration.CustomizableEdges = customizableEdges3;
             picAvatar.ShadowDecoration.Mode = Guna.UI2.WinForms.Enums.ShadowMode.Circle;
             picAvatar.Size = new Size(145, 145);
             picAvatar.SizeMode = PictureBoxSizeMode.Zoom;
@@ -130,6 +131,8 @@
             Controls.Add(picAvatar);
             Name = "Caller";
             Text = "Caller";
+            FormClosing += Caller_FormClosing;
+            Load += Caller_Load;
             ((System.ComponentModel.ISupportInitialize)picAvatar).EndInit();
             ResumeLayout(false);
             PerformLayout();
