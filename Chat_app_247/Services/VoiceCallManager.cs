@@ -52,8 +52,9 @@ namespace Chat_app_247.Services
             {
                 try
                 {
-                    // Chỉ gửi khi đã có local description
-                    if (_pc.localDescription != null &&
+                    // Chỉ gửi Candidate khi đã có CallId và Token (tránh gửi rác)
+                    if (!string.IsNullOrEmpty(_currentCallId) &&
+                        _pc.localDescription != null &&
                         !string.IsNullOrEmpty(candidate.candidate))
                     {
                         await _firebaseService.SendSignalAsync(
@@ -71,41 +72,29 @@ namespace Chat_app_247.Services
                 }
                 catch (Exception ex)
                 {
-                    OnCallStatusChanged?.Invoke($"Lỗi gửi ICE candidate: {ex.Message}");
+                    // Log lỗi thay vì crash app
+                    System.Diagnostics.Debug.WriteLine($"Lỗi gửi ICE candidate: {ex.Message}");
                 }
             };
+
 
             _pc.onconnectionstatechange += (state) =>
             {
                 try
                 {
+                    // Gọi về UI thread an toàn hơn thông qua event
                     OnCallStatusChanged?.Invoke($"Trạng thái: {state}");
 
-                    switch (state)
+                    if (state == RTCPeerConnectionState.connected)
                     {
-                        case RTCPeerConnectionState.connected:
-                            _winAudio?.Start();
-                            OnCallStatusChanged?.Invoke("Đã kết nối!");
-                            break;
-
-                        case RTCPeerConnectionState.failed:
-                            OnCallStatusChanged?.Invoke("Kết nối thất bại. Kiểm tra mạng.");
-                            EndCall();
-                            break;
-
-                        case RTCPeerConnectionState.disconnected:
-                            OnCallStatusChanged?.Invoke("Mất kết nối...");
-                            break;
-
-                        case RTCPeerConnectionState.closed:
-                            EndCall();
-                            break;
+                        _winAudio?.Start();
+                    }
+                    else if (state == RTCPeerConnectionState.failed || state == RTCPeerConnectionState.closed)
+                    {
+                        EndCall();
                     }
                 }
-                catch (Exception ex)
-                {
-                    OnCallStatusChanged?.Invoke($"Lỗi xử lý trạng thái: {ex.Message}");
-                }
+                catch { }
             };
 
             try
@@ -126,23 +115,12 @@ namespace Chat_app_247.Services
 
                 _pc.OnAudioFormatsNegotiated += (formats) =>
                 {
-                    try
-                    {
-                        if (formats != null && formats.Count > 0)
-                        {
-                            _winAudio?.SetAudioSinkFormat(formats[0]);
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        OnCallStatusChanged?.Invoke($"Lỗi cài đặt audio: {ex.Message}");
-                    }
+                    try { _winAudio?.SetAudioSinkFormat(formats[0]); } catch { }
                 };
             }
             catch (Exception ex)
             {
-                OnCallStatusChanged?.Invoke($"Không thể khởi tạo audio: {ex.Message}");
-                throw; // Ném lỗi để caller biết và xử lý
+                OnCallStatusChanged?.Invoke($"Lỗi Mic/Loa: {ex.Message}");
             }
         }
 
@@ -260,23 +238,22 @@ namespace Chat_app_247.Services
 
             try
             {
-                switch (msg.Type)
+                System.Diagnostics.Debug.WriteLine($"Nhận tín hiệu: {msg.Type}");
+                switch (msg.Type?.ToLower()) // Chuyển về lowercase để so sánh an toàn
                 {
                     case "offer":
+                        // Chỉ nhận offer khi chưa kết nối
                         if (pc.signalingState == RTCSignalingState.stable)
                         {
-                            // Set remote description
                             pc.setRemoteDescription(new RTCSessionDescriptionInit
                             {
                                 type = RTCSdpType.offer,
                                 sdp = msg.Sdp
                             });
 
-                            // Tạo answer
                             var answer = pc.createAnswer(null);
                             await pc.setLocalDescription(answer);
 
-                            // Gửi answer
                             await _firebaseService.SendSignalAsync(
                                 _currentCallId,
                                 "answer",
@@ -287,18 +264,8 @@ namespace Chat_app_247.Services
                                 },
                                 _currentUserToken);
 
-                            lock (_pendingCandidates)
-                            {
-                                foreach (var candidate in _pendingCandidates)
-                                {
-                                    try
-                                    {
-                                        pc.addIceCandidate(candidate);
-                                    }
-                                    catch { }
-                                }
-                                _pendingCandidates.Clear();
-                            }
+                            // Xử lý candidate bị pending
+                            ProcessPendingCandidates(pc);
                         }
                         break;
 
@@ -311,18 +278,7 @@ namespace Chat_app_247.Services
                                 sdp = msg.Sdp
                             });
 
-                            lock (_pendingCandidates)
-                            {
-                                foreach (var candidate in _pendingCandidates)
-                                {
-                                    try
-                                    {
-                                        pc.addIceCandidate(candidate);
-                                    }
-                                    catch { }
-                                }
-                                _pendingCandidates.Clear();
-                            }
+                            ProcessPendingCandidates(pc);
                         }
                         break;
 
@@ -336,18 +292,10 @@ namespace Chat_app_247.Services
 
                         if (pc.remoteDescription != null)
                         {
-                            try
-                            {
-                                pc.addIceCandidate(iceCandidate);
-                            }
-                            catch (Exception ex)
-                            {
-                                OnCallStatusChanged?.Invoke($"Lỗi thêm ICE candidate: {ex.Message}");
-                            }
+                            pc.addIceCandidate(iceCandidate);
                         }
                         else
                         {
-                            // Buffer candidate để add sau
                             lock (_pendingCandidates)
                             {
                                 _pendingCandidates.Add(iceCandidate);
@@ -356,19 +304,27 @@ namespace Chat_app_247.Services
                         break;
 
                     case "bye":
-                        OnCallStatusChanged?.Invoke("Người kia đã ngắt máy.");
-                        EndCall();
-                        break;
-
                     case "declined":
-                        OnCallStatusChanged?.Invoke("Cuộc gọi bị từ chối.");
                         EndCall();
+                        OnCallStatusChanged?.Invoke("Cuộc gọi kết thúc.");
                         break;
                 }
             }
             catch (Exception ex)
             {
-                OnCallStatusChanged?.Invoke($"Lỗi xử lý tín hiệu {msg.Type}: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"Lỗi HandleSignal: {ex.Message}");
+            }
+        }
+
+        private void ProcessPendingCandidates(RTCPeerConnection pc)
+        {
+            lock (_pendingCandidates)
+            {
+                foreach (var candidate in _pendingCandidates)
+                {
+                    try { pc.addIceCandidate(candidate); } catch { }
+                }
+                _pendingCandidates.Clear();
             }
         }
 
