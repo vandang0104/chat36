@@ -242,30 +242,50 @@ namespace Chat_app_247.Services
                 switch (msg.Type?.ToLower()) // Chuyển về lowercase để so sánh an toàn
                 {
                     case "offer":
-                        // Chỉ nhận offer khi chưa kết nối
-                        if (pc.signalingState == RTCSignalingState.stable)
+                        System.Diagnostics.Debug.WriteLine("DEBUG: Bắt đầu xử lý Offer...");
+                        try
                         {
-                            pc.setRemoteDescription(new RTCSessionDescriptionInit
+                            if (pc.signalingState == RTCSignalingState.stable)
                             {
-                                type = RTCSdpType.offer,
-                                sdp = msg.Sdp
-                            });
-
-                            var answer = pc.createAnswer(null);
-                            await pc.setLocalDescription(answer);
-
-                            await _firebaseService.SendSignalAsync(
-                                _currentCallId,
-                                "answer",
-                                new SignalingMessage
+                                // 1. Set Remote
+                                System.Diagnostics.Debug.WriteLine("DEBUG: Đang SetRemoteDescription...");
+                                pc.setRemoteDescription(new RTCSessionDescriptionInit
                                 {
-                                    Type = "answer",
-                                    Sdp = answer.sdp
-                                },
-                                _currentUserToken);
+                                    type = RTCSdpType.offer,
+                                    sdp = msg.Sdp
+                                });
 
-                            // Xử lý candidate bị pending
-                            ProcessPendingCandidates(pc);
+                                // 2. Create Answer
+                                System.Diagnostics.Debug.WriteLine("DEBUG: Đang CreateAnswer...");
+                                var answer = pc.createAnswer(null);
+
+                                // 3. Set Local
+                                System.Diagnostics.Debug.WriteLine("DEBUG: Đang SetLocalDescription...");
+                                await pc.setLocalDescription(answer);
+
+                                // 4. Gửi Answer
+                                System.Diagnostics.Debug.WriteLine("DEBUG: Đang gửi Answer lên Firebase...");
+                                await _firebaseService.SendSignalAsync(
+                                    _currentCallId,
+                                    "answer",
+                                    new SignalingMessage
+                                    {
+                                        Type = "answer",
+                                        Sdp = answer.sdp
+                                    },
+                                    _currentUserToken);
+
+                                System.Diagnostics.Debug.WriteLine("THÀNH CÔNG: Đã gửi Answer!");
+                                ProcessPendingCandidates(pc);
+                            }
+                            else
+                            {
+                                System.Diagnostics.Debug.WriteLine($"LỖI: PeerConnection trạng thái không hợp lệ: {pc.signalingState}");
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            System.Diagnostics.Debug.WriteLine($"EXCEPTION TRONG OFFER: {ex.ToString()}");
                         }
                         break;
 

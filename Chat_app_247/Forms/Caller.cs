@@ -74,22 +74,26 @@ namespace Chat_app_247.Forms
         {
             try
             {
+                _callManager.OnCallStatusChanged += (status) =>
+                {
+                    if (this.InvokeRequired) this.Invoke(new Action(() => lblStatus.Text = status));
+                    else lblStatus.Text = status;
+                };
 
                 if (_isCaller)
                 {
-                    lblStatus.Text = "Đang gọi...";
                     await _callManager.StartCallAsync(_callId, _token);
+                    lblStatus.Text = "Đang gọi...";
                 }
                 else
                 {
-                    lblStatus.Text = "Đang kết nối...";
                     await _callManager.JoinCallAsync(_callId, _token);
+                    lblStatus.Text = "Đang kết nối...";
                 }
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Lỗi cuộc gọi: {ex.Message}", "Lỗi", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                this.Close();
+                MessageBox.Show($"Lỗi: {ex.Message}");
             }
         }
 

@@ -15,6 +15,10 @@ namespace Chat_app_247.Services
     public class FirebaseDatabaseService
     {
         private readonly HttpClient _http = new();
+        private readonly JsonSerializerOptions _options = new JsonSerializerOptions
+        {
+            PropertyNameCaseInsensitive = true
+        };
 
         public async Task PutAsync<T>(string path, T data, string idToken)
         {
@@ -173,7 +177,7 @@ namespace Chat_app_247.Services
                                     {
                                         try
                                         {
-                                            var allSignals = JsonSerializer.Deserialize<Dictionary<string, SignalingMessage>>(dataElement.GetRawText());
+                                            var allSignals = JsonSerializer.Deserialize<Dictionary<string, SignalingMessage>>(dataElement.GetRawText(), _options);
                                             if (allSignals != null)
                                             {
                                                 foreach (var kvp in allSignals)
@@ -214,10 +218,6 @@ namespace Chat_app_247.Services
                         }
                     }
                 }
-            }
-            catch (OperationCanceledException)
-            {
-                // Bình thường khi cancel
             }
             catch (Exception ex)
             {
