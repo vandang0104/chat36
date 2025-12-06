@@ -92,7 +92,7 @@ namespace Chat_app_247.Forms
 
                 // Chuyển sang form Caller
                 this.Hide();
-                Caller callerForm = new Caller(_callId, _token, false);
+                Caller callerForm = new Caller(_callId, _token, false,_myUserId);
                 callerForm.FormClosed += (s, args) => this.Close();
                 callerForm.Show();
 

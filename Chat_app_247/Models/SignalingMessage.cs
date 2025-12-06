@@ -13,5 +13,6 @@ namespace Chat_app_247.Models
         public string Candidate { get; set; } // Dùng cho ICE Candidate
         public string SdpMid { get; set; }
         public int SdpMLineIndex { get; set; }
+        public string SenderId { get; set; }
     }
 }

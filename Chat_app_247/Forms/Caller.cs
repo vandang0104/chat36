@@ -11,8 +11,9 @@ namespace Chat_app_247.Forms
         private string _token;
         private bool _isCaller;
         private bool _isClosing = false;
+        private string _userID;
 
-        public Caller(string callId, string token, bool isCaller)
+        public Caller(string callId, string token, bool isCaller, string userID)
         {
             InitializeComponent();
             _callId = callId;
@@ -23,6 +24,7 @@ namespace Chat_app_247.Forms
             _callManager = new VoiceCallManager(firebaseService);
 
             _callManager.OnCallStatusChanged += UpdateStatus;
+            _userID = userID;
         }
 
         private void UpdateStatus(string status)
@@ -82,7 +84,7 @@ namespace Chat_app_247.Forms
 
                 if (_isCaller)
                 {
-                    await _callManager.StartCallAsync(_callId, _token);
+                    await _callManager.StartCallAsync(_callId, _token,_userID);
                     lblStatus.Text = "Đang gọi...";
                 }
                 else

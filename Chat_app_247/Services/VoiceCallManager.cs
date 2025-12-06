@@ -1,8 +1,9 @@
 ﻿using Chat_app_247.Models;
+using Newtonsoft.Json.Linq;
 using SIPSorcery.Media;
 using SIPSorcery.Net;
-using SIPSorceryMedia.Windows;
 using SIPSorceryMedia.Abstractions;
+using SIPSorceryMedia.Windows;
 using System;
 using System.Collections.Generic;
 using System.Threading;
@@ -19,7 +20,7 @@ namespace Chat_app_247.Services
         private string _currentUserToken;
         private CancellationTokenSource _listenCts;
         private WindowsAudioEndPoint _winAudio;
-
+        private string _currentUserId;
         // Thêm lock để tránh race condition
         private readonly object _lockObj = new object();
         private bool _isDisposed = false;
@@ -124,8 +125,10 @@ namespace Chat_app_247.Services
             }
         }
 
-        public async Task StartCallAsync(string callId, string token)
+        public async Task StartCallAsync(string callId, string token, string userId)
         {
+            _currentCallId = userId;
+
             lock (_lockObj)
             {
                 if (_isDisposed)
@@ -159,7 +162,8 @@ namespace Chat_app_247.Services
                     new SignalingMessage
                     {
                         Type = "offer",
-                        Sdp = offer.sdp
+                        Sdp = offer.sdp,
+                        SenderId = userId
                     },
                     _currentUserToken);
 
@@ -229,95 +233,112 @@ namespace Chat_app_247.Services
 
         private async void HandleSignalAsync(string key, SignalingMessage msg)
         {
+            if (msg.SenderId == _currentUserId)
+            {
+                return;
+            }
+
             RTCPeerConnection pc;
             lock (_lockObj)
             {
-                if (_isDisposed || _pc == null) return;
-                pc = _pc; // Local copy để tránh race condition
+                if (msg.Type?.ToLower() == "offer")
+                {
+                    if (_pc == null || _pc.signalingState == RTCSignalingState.closed)
+                    {
+                        System.Diagnostics.Debug.WriteLine("DEBUG: PC cũ/đóng, đang tạo PC mới cho cuộc gọi đến...");
+                        InitializePeerConnection();
+                    }
+                }
+                if (_isDisposed || _pc == null || _pc.signalingState == RTCSignalingState.closed) return;
+                    
+                pc = _pc;
             }
 
             try
             {
-                System.Diagnostics.Debug.WriteLine($"Nhận tín hiệu: {msg.Type}");
-                switch (msg.Type?.ToLower()) // Chuyển về lowercase để so sánh an toàn
+                System.Diagnostics.Debug.WriteLine($"Nhận tín hiệu loại: {msg.Type} từ {msg.SenderId}");
+
+                switch (msg.Type?.ToLower())
                 {
                     case "offer":
-                        System.Diagnostics.Debug.WriteLine("DEBUG: Bắt đầu xử lý Offer...");
-                        try
+                        // Receiver xử lý Offer
+                        // Chỉ xử lý khi đang ở trạng thái Stable (sẵn sàng)
+                        if (pc.signalingState == RTCSignalingState.stable)
                         {
-                            if (pc.signalingState == RTCSignalingState.stable)
+                            System.Diagnostics.Debug.WriteLine("DEBUG: Receiver đang xử lý Offer...");
+
+                            // 1. Set Remote Description
+                            pc.setRemoteDescription(new RTCSessionDescriptionInit
                             {
-                                // 1. Set Remote
-                                System.Diagnostics.Debug.WriteLine("DEBUG: Đang SetRemoteDescription...");
-                                pc.setRemoteDescription(new RTCSessionDescriptionInit
+                                type = RTCSdpType.offer,
+                                sdp = msg.Sdp
+                            });
+
+                            // 2. Tạo Answer
+                            var answer = pc.createAnswer(null);
+
+                            // 3. Set Local Description
+                            await pc.setLocalDescription(answer);
+
+                            // 4. Gửi Answer lên Firebase
+                            // Lưu ý: Nhớ kèm SenderId là ID của mình để bên kia lọc được
+                            await _firebaseService.SendSignalAsync(
+                                _currentCallId,
+                                "answer",
+                                new SignalingMessage
                                 {
-                                    type = RTCSdpType.offer,
-                                    sdp = msg.Sdp
-                                });
+                                    Type = "answer",
+                                    Sdp = answer.sdp,
+                                    SenderId = _currentUserId // <-- Quan trọng
+                                },
+                                _currentUserToken // Token của đối phương (Caller)
+                            );
 
-                                // 2. Create Answer
-                                System.Diagnostics.Debug.WriteLine("DEBUG: Đang CreateAnswer...");
-                                var answer = pc.createAnswer(null);
-
-                                // 3. Set Local
-                                System.Diagnostics.Debug.WriteLine("DEBUG: Đang SetLocalDescription...");
-                                await pc.setLocalDescription(answer);
-
-                                // 4. Gửi Answer
-                                System.Diagnostics.Debug.WriteLine("DEBUG: Đang gửi Answer lên Firebase...");
-                                await _firebaseService.SendSignalAsync(
-                                    _currentCallId,
-                                    "answer",
-                                    new SignalingMessage
-                                    {
-                                        Type = "answer",
-                                        Sdp = answer.sdp
-                                    },
-                                    _currentUserToken);
-
-                                System.Diagnostics.Debug.WriteLine("THÀNH CÔNG: Đã gửi Answer!");
-                                ProcessPendingCandidates(pc);
-                            }
-                            else
-                            {
-                                System.Diagnostics.Debug.WriteLine($"LỖI: PeerConnection trạng thái không hợp lệ: {pc.signalingState}");
-                            }
+                            ProcessPendingCandidates(pc);
                         }
-                        catch (Exception ex)
+                        else
                         {
-                            System.Diagnostics.Debug.WriteLine($"EXCEPTION TRONG OFFER: {ex.ToString()}");
+                            // Nhờ bước lọc SenderId ở đầu, Caller sẽ không bao giờ chạy vào đây nữa -> Hết lỗi have_local_offer
+                            System.Diagnostics.Debug.WriteLine($"Cảnh báo: Nhận Offer nhưng trạng thái không phải Stable: {pc.signalingState}");
                         }
                         break;
 
                     case "answer":
+                        // Caller xử lý Answer từ Receiver
                         if (pc.signalingState == RTCSignalingState.have_local_offer)
                         {
+                            System.Diagnostics.Debug.WriteLine("DEBUG: Caller đang xử lý Answer...");
                             pc.setRemoteDescription(new RTCSessionDescriptionInit
                             {
                                 type = RTCSdpType.answer,
                                 sdp = msg.Sdp
                             });
-
                             ProcessPendingCandidates(pc);
                         }
                         break;
 
                     case "candidate":
-                        var iceCandidate = new RTCIceCandidateInit
+                        if (pc.remoteDescription != null && pc.signalingState != RTCSignalingState.closed)
                         {
-                            candidate = msg.Candidate,
-                            sdpMid = msg.SdpMid,
-                            sdpMLineIndex = (ushort)msg.SdpMLineIndex
-                        };
-
-                        if (pc.remoteDescription != null)
-                        {
+                            var iceCandidate = new RTCIceCandidateInit
+                            {
+                                candidate = msg.Candidate,
+                                sdpMid = msg.SdpMid,
+                                sdpMLineIndex = (ushort)msg.SdpMLineIndex
+                            };
                             pc.addIceCandidate(iceCandidate);
                         }
                         else
                         {
+                            // Lưu vào hàng đợi nếu RemoteDescription chưa sẵn sàng
                             lock (_pendingCandidates)
                             {
+                                var iceCandidate = new RTCIceCandidateInit
+                                {
+                                    candidate = msg.Candidate,
+                                    sdpMid = msg.SdpMid,
+                                    sdpMLineIndex = (ushort)msg.SdpMLineIndex
+                                };
                                 _pendingCandidates.Add(iceCandidate);
                             }
                         }
@@ -326,7 +347,6 @@ namespace Chat_app_247.Services
                     case "bye":
                     case "declined":
                         EndCall();
-                        OnCallStatusChanged?.Invoke("Cuộc gọi kết thúc.");
                         break;
                 }
             }
